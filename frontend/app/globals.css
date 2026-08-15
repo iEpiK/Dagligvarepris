@@ -259,6 +259,30 @@ label {
   display: inline-block;
 }
 
+.category-grid {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.category-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.category-card .name {
+  font-weight: 600;
+}
+
+.category-card .meta {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .empty-state {
   text-align: center;
   padding: 48px 0;

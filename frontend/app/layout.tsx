@@ -17,9 +17,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="logo">
               Daglig<span>vare</span>pris
             </Link>
-            <Link href="/connect" className="nav-link">
-              Koble til konto
-            </Link>
+            <nav style={{ display: "flex", alignItems: "center" }}>
+              <Link href="/kategorier" className="nav-link">
+                Kategorier
+              </Link>
+              <Link href="/profil" className="nav-link">
+                Min side
+              </Link>
+              <Link href="/connect" className="nav-link">
+                Koble til konto
+              </Link>
+            </nav>
           </div>
         </header>
         {children}

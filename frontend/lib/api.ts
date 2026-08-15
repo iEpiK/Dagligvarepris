@@ -23,6 +23,31 @@ export async function searchProducts(query: string): Promise<Product[]> {
   return data.products;
 }
 
+export interface Category {
+  category: string;
+  count: number;
+}
+
+export async function listCategories(): Promise<Category[]> {
+  const res = await fetch(`${API_URL}/products/categories`, { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.categories;
+}
+
+export async function listProductsByCategory(
+  category: string,
+  page = 1
+): Promise<{ products: Product[]; hasMore: boolean }> {
+  const res = await fetch(
+    `${API_URL}/products?category=${encodeURIComponent(category)}&page=${page}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) return { products: [], hasMore: false };
+  const data = await res.json();
+  return { products: data.products, hasMore: data.hasMore };
+}
+
 export async function getProduct(id: string) {
   const res = await fetch(`${API_URL}/products/${id}`, { cache: "no-store" });
   if (!res.ok) return null;
@@ -75,6 +100,43 @@ export async function signup(email: string, password: string): Promise<string> {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Kunne ikke opprette bruker");
   return data.token;
+}
+
+export interface Connection {
+  id: string;
+  chain: string;
+  status: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export async function listConnections(token: string): Promise<Connection[]> {
+  const res = await fetch(`${API_URL}/connections`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.connections;
+}
+
+export async function syncConnection(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/connections/${id}/sync`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Synk feilet");
+}
+
+export async function disconnectConnection(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/connections/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Kunne ikke koble fra");
 }
 
 export async function login(email: string, password: string): Promise<string> {
