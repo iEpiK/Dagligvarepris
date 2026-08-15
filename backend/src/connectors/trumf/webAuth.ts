@@ -300,11 +300,14 @@ async function exchangeCodeForTokens(code: string, codeVerifier: string): Promis
     body: body.toString(),
   });
 
+  const responseText = await res.text();
+  console.error(`[trumf] connect/token -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+
   if (!res.ok) {
-    throw new Error(`Trumf: token-utveksling feilet (HTTP ${res.status})`);
+    throw new Error(`Trumf: token-utveksling feilet (HTTP ${res.status}): ${responseText.slice(0, 300)}`);
   }
 
-  const data = (await res.json()) as {
+  const data = JSON.parse(responseText) as {
     access_token: string;
     refresh_token?: string;
     id_token?: string;
@@ -335,11 +338,16 @@ export async function refreshWebLogin(refreshToken: string): Promise<WebLoginTok
     body: body.toString(),
   });
 
+  const responseText = await res.text();
+  console.error(`[trumf] refresh connect/token -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+
   if (!res.ok) {
-    throw new Error(`Trumf: refresh av token feilet (HTTP ${res.status}) - kontoen må trolig kobles til på nytt`);
+    throw new Error(
+      `Trumf: refresh av token feilet (HTTP ${res.status}) - kontoen må trolig kobles til på nytt: ${responseText.slice(0, 300)}`
+    );
   }
 
-  const data = (await res.json()) as {
+  const data = JSON.parse(responseText) as {
     access_token: string;
     refresh_token?: string;
     expires_in: number;
