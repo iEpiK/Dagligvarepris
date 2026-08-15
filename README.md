@@ -9,24 +9,38 @@ omgang – dekker Kiwi, Meny, Spar og Joker via NorgesGruppen).
 Trumf har ingen offentlig/offisiell API for kjøpshistorikk. Dette prosjektet
 bruker to reverse-engineerte, uoffisielle deler av Trumf sin egen infrastruktur:
 
-**1. Innlogging** – standard OAuth2 Authorization Code + PKCE mot
-`id.trumf.no`, samme identitetstjeneste som `www.trumf.no` selv bruker
-(`client_id=trumf`). Kartlagt og verifisert steg for steg via nettleserens
-Network-fane (ikke gjettet):
+**1. Innlogging** – OAuth2 Authorization Code + PKCE mot `id.trumf.no`, men
+drevet gjennom **www.trumf.no sin egen Auth.js (NextAuth)-installasjon** i
+stedet for at vi bygger `/connect/authorize`-kallet selv. Grunnen: `client_id=trumf`
+er en konfidensiell OAuth-klient som krever en `client_secret` kun
+www.trumf.no sin egen backend har (bekreftet ved at et eget forsøk på å kalle
+`POST id.trumf.no/connect/token` selv alltid ga `{"error":"invalid_client"}`,
+uansett om `client_id` ble sendt i body eller via HTTP Basic). Ved å starte
+flyten fra Auth.js sine egne endepunkter lar vi DERES backend gjøre selve
+token-byttet, og henter ut resultatet via deres `/api/auth/session`-endepunkt
+etterpå – akkurat slik nettleseren selv gjør det. Kartlagt og verifisert
+steg for steg via nettleserens Network-fane (ikke gjettet):
 
 ```
-GET  id.trumf.no/connect/authorize            -> redirect med correlationId + returnUrl
-POST id.trumf.no/trumfid/login/validateUser    {"phoneNumber": "..."}
-POST id.trumf.no/trumfid/login/pwd             {"password": "...", "rememberMe": true}
-POST id.trumf.no/trumfid/smsCode               {"otp": "...", "rememberMeSms": true}   (2FA)
-GET  <returnUrl> (=/connect/authorize/callback) -> redirect med ?code=...
-POST id.trumf.no/connect/token                  bytter koden mot access_token + refresh_token
+GET  www.trumf.no/api/auth/csrf                    -> {csrfToken} + csrf-cookie
+POST www.trumf.no/api/auth/signin/trumf-personal    csrfToken=...
+     -> redirect til id.trumf.no/connect/authorize (Auth.js sin egen state+PKCE)
+GET  id.trumf.no/connect/authorize                  -> redirect med correlationId + returnUrl
+POST id.trumf.no/trumfid/login/validateUser          {"phoneNumber": "..."}
+POST id.trumf.no/trumfid/login/pwd                   {"password": "...", "rememberMe": true}
+POST id.trumf.no/trumfid/smsCode                     {"otp": "...", "rememberMeSms": true}   (2FA)
+GET  <returnUrl> (=/connect/authorize/callback)      -> redirect med ?code=...&state=...
+     -> redirect videre til www.trumf.no/api/auth/callback/trumf-personal
+GET  www.trumf.no/api/auth/callback/trumf-personal   Auth.js bytter koden mot tokens server-side
+GET  www.trumf.no/api/auth/session                   -> {"accessToken": "...", "idToken": "...", ...}
 ```
 
-Full implementasjon: `backend/src/connectors/trumf/webAuth.ts`. Siden scopet
-inkluderer `offline_access`, kjøres denne flyten kun **én gang** per bruker –
-deretter bruker bakgrunnsjobben kun `refresh_token` (samme fil, `refreshWebLogin()`)
-til å hente nye access-tokens uten noen ny SMS-bekreftelse.
+Full implementasjon: `backend/src/connectors/trumf/webAuth.ts`. Auth.js sin
+egen sesjon (cookien vi lagrer kryptert som "refreshToken", selv om det ikke
+er et ekte OAuth refresh_token) varer rundt ett år, mens access_token kun
+varer 1 time – bakgrunnsjobben kaller derfor `/api/auth/session` på nytt for
+hver synk (`refreshWebLogin()` i samme fil) i stedet for å gjøre en ny full
+SMS-flyt.
 
 Merk: dette er **web-varianten** av innloggingen (samme som `www.trumf.no`
 selv bruker), ikke Android-appens. Det er bevisst – Android-appens flyt
