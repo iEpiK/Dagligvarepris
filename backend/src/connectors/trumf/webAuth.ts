@@ -285,23 +285,53 @@ async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: stri
   return { code, debug: "" };
 }
 
+/**
+ * Prøver ett token-kall. `useBasicAuth=true` sender client_id via HTTP Basic
+ * (med tomt passord) i stedet for i body - noen Duende/IdentityServer-klienter
+ * er satt opp til å kreve dette selv uten hemmelig client secret.
+ */
+async function postTokenRequest(
+  params: Record<string, string>,
+  useBasicAuth: boolean
+): Promise<{ res: Response; text: string }> {
+  const body = new URLSearchParams(params);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    ...COMMON_HEADERS,
+  };
+  if (useBasicAuth) {
+    headers.Authorization = `Basic ${Buffer.from(`${CLIENT_ID}:`).toString("base64")}`;
+  }
+
+  const res = await fetch(`${AUTH_BASE}/connect/token`, { method: "POST", headers, body: body.toString() });
+  const text = await res.text();
+  return { res, text };
+}
+
+function isInvalidClient(responseText: string): boolean {
+  try {
+    return (JSON.parse(responseText) as { error?: string }).error === "invalid_client";
+  } catch {
+    return false;
+  }
+}
+
 async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<WebLoginTokens> {
-  const body = new URLSearchParams({
+  const baseParams = {
     grant_type: "authorization_code",
     code,
     redirect_uri: REDIRECT_URI,
     code_verifier: codeVerifier,
-    client_id: CLIENT_ID,
-  });
+  };
 
-  const res = await fetch(`${AUTH_BASE}/connect/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", ...COMMON_HEADERS },
-    body: body.toString(),
-  });
+  let { res, text: responseText } = await postTokenRequest({ ...baseParams, client_id: CLIENT_ID }, false);
+  console.error(`[trumf] connect/token (public) -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
 
-  const responseText = await res.text();
-  console.error(`[trumf] connect/token -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+  if (!res.ok && isInvalidClient(responseText)) {
+    // Prøv på nytt med client_id via HTTP Basic (tomt passord) - noen klienter krever dette.
+    ({ res, text: responseText } = await postTokenRequest({ ...baseParams, client_id: CLIENT_ID }, true));
+    console.error(`[trumf] connect/token (basic auth) -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+  }
 
   if (!res.ok) {
     throw new Error(`Trumf: token-utveksling feilet (HTTP ${res.status}): ${responseText.slice(0, 300)}`);
@@ -326,20 +356,15 @@ async function exchangeCodeForTokens(code: string, codeVerifier: string): Promis
 
 /** Bytter et lagret refresh-token mot et nytt access-token - ingen ny SMS kreves. */
 export async function refreshWebLogin(refreshToken: string): Promise<WebLoginTokens> {
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: CLIENT_ID,
-  });
+  const baseParams = { grant_type: "refresh_token", refresh_token: refreshToken };
 
-  const res = await fetch(`${AUTH_BASE}/connect/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", ...COMMON_HEADERS },
-    body: body.toString(),
-  });
+  let { res, text: responseText } = await postTokenRequest({ ...baseParams, client_id: CLIENT_ID }, false);
+  console.error(`[trumf] refresh connect/token (public) -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
 
-  const responseText = await res.text();
-  console.error(`[trumf] refresh connect/token -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+  if (!res.ok && isInvalidClient(responseText)) {
+    ({ res, text: responseText } = await postTokenRequest({ ...baseParams, client_id: CLIENT_ID }, true));
+    console.error(`[trumf] refresh connect/token (basic auth) -> HTTP ${res.status}, body: ${responseText.slice(0, 500) || "(tom)"}`);
+  }
 
   if (!res.ok) {
     throw new Error(
