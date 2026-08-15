@@ -119,8 +119,16 @@ export default function ProfilPage() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => handleSync(c.id)} disabled={busyId === c.id}>
-                  {busyId === c.id ? "Jobber …" : "Synk nå"}
+                <button
+                  type="button"
+                  onClick={() => handleSync(c.id)}
+                  disabled={busyId === c.id || c.status === "waiting_for_export"}
+                >
+                  {busyId === c.id
+                    ? "Jobber …"
+                    : c.status === "waiting_for_export"
+                      ? "Synkroniserer …"
+                      : "Synk nå"}
                 </button>
                 <button type="button" className="secondary" onClick={() => handleDisconnect(c.id)} disabled={busyId === c.id}>
                   Koble fra og slett data

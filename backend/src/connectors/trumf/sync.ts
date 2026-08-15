@@ -59,7 +59,21 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
     }
 
     // Fase 2: se om eksporten vi ba om tidligere er klar.
-    const receipts = await connector.fetchExportIfReady(fresh.accessToken);
+    // Sjekket i sin egen try/catch: dette kallet kan feile forbigående (bl.a.
+    // observert HTTP 401 fra Trumf når eksporten rett og slett ikke er klar
+    // ennå, i stedet for et rent "ikke funnet"). Det er IKKE en feil brukeren
+    // trenger se på Min side - logg den her og prøv igjen neste runde.
+    // Ekte kontofeil (utløpt sesjon o.l.) er allerede fanget opp av
+    // refreshAccessToken-kallet over, så dette maskerer ikke noe reelt.
+    let receipts: NormalizedReceipt[] | null = null;
+    try {
+      receipts = await connector.fetchExportIfReady(fresh.accessToken);
+    } catch (checkErr) {
+      console.error(
+        `[trumf] sync ${connectionId}: eksport-sjekk feilet forbigående (prøver igjen senere):`,
+        checkErr instanceof Error ? checkErr.message : checkErr
+      );
+    }
 
     if (!receipts) {
       const waitedMs = Date.now() - connection.exportRequestedAt.getTime();
