@@ -66,6 +66,19 @@ class CookieJar {
       .map(([k, v]) => `${k}=${v}`)
       .join("; ");
   }
+
+  /** Kun navnene, ikke verdiene - trygt å logge (verdiene er sesjons-/sikkerhetstokens). */
+  names(): string[] {
+    return Array.from(this.cookies.keys());
+  }
+}
+
+/** Logger status, ev. redirect-mål og hvilke cookies vi har samlet så langt - uten å lekke cookie-verdier. */
+function logStep(name: string, res: Response, cookies: CookieJar): void {
+  const location = res.headers.get("location");
+  console.error(
+    `[trumf] ${name} -> HTTP ${res.status}${location ? `, Location: ${location}` : ""}, cookies nå: [${cookies.names().join(", ")}]`
+  );
 }
 
 function base64url(buf: Buffer): string {
@@ -119,6 +132,7 @@ export async function startWebLogin(phoneNumber: string, password: string): Prom
     redirect: "manual",
   });
   cookies.applyFrom(authorizeRes);
+  logStep("connect/authorize", authorizeRes, cookies);
 
   const loginLocation = authorizeRes.headers.get("location");
   if (!loginLocation) {
@@ -136,6 +150,7 @@ export async function startWebLogin(phoneNumber: string, password: string): Prom
     redirect: "manual",
   });
   cookies.applyFrom(loginRes);
+  logStep("trumfid/login", loginRes, cookies);
 
   const stepParams = new URLSearchParams({ correlationId, returnUrl });
 
@@ -145,6 +160,7 @@ export async function startWebLogin(phoneNumber: string, password: string): Prom
     body: JSON.stringify({ phoneNumber }),
   });
   cookies.applyFrom(validateRes);
+  logStep("trumfid/login/validateUser", validateRes, cookies);
   if (!validateRes.ok) {
     throw new Error(`Trumf: ukjent telefonnummer eller feil ved validering (HTTP ${validateRes.status})`);
   }
@@ -155,6 +171,7 @@ export async function startWebLogin(phoneNumber: string, password: string): Prom
     body: JSON.stringify({ password, rememberMe: true }),
   });
   cookies.applyFrom(pwdRes);
+  logStep("trumfid/login/pwd", pwdRes, cookies);
   if (!pwdRes.ok) {
     throw new Error(`Trumf: feil passord (HTTP ${pwdRes.status})`);
   }
@@ -189,10 +206,36 @@ export async function completeWebLoginWithOtp(pending: PendingWebLogin, otp: str
     body: JSON.stringify({ otp, rememberMeSms: true }),
   });
   pending.cookies.applyFrom(smsRes);
-  const smsBody = await smsRes.text().catch(() => "");
-  console.error(`[trumf] smsCode -> HTTP ${smsRes.status}, body: ${smsBody.slice(0, 300) || "(tom)"}`);
+  logStep("trumfid/smsCode", smsRes, pending.cookies);
+  const smsBodyText = await smsRes.text().catch(() => "");
+  console.error(`[trumf] smsCode body: ${smsBodyText.slice(0, 300) || "(tom)"}`);
   if (!smsRes.ok) {
     throw new Error(`Trumf: feil SMS-kode (HTTP ${smsRes.status})`);
+  }
+
+  // Etter vellykket SMS-bekreftelse ber Trumf normalt om å registrere
+  // biometrisk pålogging for denne "enheten" (redirect: "/ui/registerbiometric?...").
+  // Vi ønsker aldri det for en backend-tjeneste, så vi hopper alltid over det -
+  // uten dette steget forblir sesjonen i en mellomtilstand og callback-et
+  // under gir aldri noen autorisasjonskode.
+  let smsBody: { redirect?: string } = {};
+  try {
+    smsBody = JSON.parse(smsBodyText);
+  } catch {
+    /* ingen gyldig JSON - behandles som "ingen redirect oppgitt" under */
+  }
+
+  if (smsBody.redirect?.toLowerCase().includes("registerbiometric")) {
+    const skipParams = new URLSearchParams({
+      correlationId: pending.correlationId,
+      returnUrl: returnUrlWithStepUp,
+    });
+    const skipRes = await fetch(`${AUTH_BASE}/trumfid/biometri/registration/skip?${skipParams.toString()}`, {
+      headers: { ...COMMON_HEADERS, Cookie: pending.cookies.header() },
+      redirect: "manual",
+    });
+    pending.cookies.applyFrom(skipRes);
+    logStep("trumfid/biometri/registration/skip", skipRes, pending.cookies);
   }
 
   const result = await tryGetAuthorizationCode(pending, returnUrlWithStepUp);
@@ -225,10 +268,9 @@ async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: stri
     redirect: "manual",
   });
   pending.cookies.applyFrom(res);
+  logStep("connect/authorize/callback", res, pending.cookies);
 
   const location = res.headers.get("location");
-  console.error(`[trumf] callback -> HTTP ${res.status}, Location: ${location ?? "(ingen)"}, cookies: ${pending.cookies.header()}`);
-
   if (!location) {
     const bodySnippet = (await res.text().catch(() => "")).slice(0, 500);
     return { code: null, debug: `HTTP ${res.status} ${res.statusText}, ingen Location-header. Body: ${bodySnippet || "(tom)"}` };
