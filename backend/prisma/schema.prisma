@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  connections ChainConnection[]
+
+  @@map("users")
+}
+
+/// Én rad per bruker per kjede de har koblet til (i dag: "trumf").
+model ChainConnection {
+  id                     String    @id @default(uuid())
+  userId                 String
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chain                  String
+  status                 String    @default("active") // active | error | disconnected
+  encryptedAccessToken   String?
+  encryptedRefreshToken  String?
+  accessTokenExpiresAt   DateTime?
+  lastSyncedAt           DateTime?
+  lastError              String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  receipts Receipt[]
+
+  @@unique([userId, chain])
+  @@map("chain_connections")
+}
+
+/// Fysisk butikk. "chain" her er underkjeden (kiwi, meny, spar, joker, rema1000 ...),
+/// mens ChainConnection.chain er login-leverandøren (trumf, rema, coop).
+model Store {
+  id         String  @id @default(uuid())
+  chain      String
+  externalId String?
+  name       String
+  address    String?
+
+  receipts Receipt[]
+  prices   Price[]
+
+  @@unique([chain, externalId])
+  @@map("stores")
+}
+
+model Receipt {
+  id           String          @id @default(uuid())
+  connectionId String
+  connection   ChainConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  externalId   String
+  storeId      String?
+  store        Store?          @relation(fields: [storeId], references: [id])
+  purchasedAt  DateTime
+  totalAmount  Decimal         @db.Decimal(10, 2)
+  rawPayload   Json?
+  createdAt    DateTime        @default(now())
+
+  items ReceiptItem[]
+
+  @@unique([connectionId, externalId])
+  @@map("receipts")
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  ean            String?  @unique
+  name           String
+  normalizedName String
+  category       String?
+  createdAt      DateTime @default(now())
+
+  items  ReceiptItem[]
+  prices Price[]
+
+  @@index([normalizedName])
+  @@map("products")
+}
+
+model ReceiptItem {
+  id         String   @id @default(uuid())
+  receiptId  String
+  receipt    Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id])
+  rawName    String
+  ean        String?
+  quantity   Decimal  @db.Decimal(10, 3)
+  unitPrice  Decimal  @db.Decimal(10, 2)
+  totalPrice Decimal  @db.Decimal(10, 2)
+
+  @@map("receipt_items")
+}
+
+/// Tidsserie bygget fra kvitteringslinjer: én rad per observert pris.
+model Price {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId    String?
+  store      Store?   @relation(fields: [storeId], references: [id])
+  chain      String
+  price      Decimal  @db.Decimal(10, 2)
+  observedAt DateTime
+  source     String   @default("receipt")
+
+  @@index([productId, observedAt])
+  @@map("prices")
+}
