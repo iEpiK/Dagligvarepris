@@ -94,16 +94,29 @@ function logStep(name: string, res: Response, cookies: CookieJar): void {
   );
 }
 
-/** Leser "exp"-claimet fra en JWT uten å verifisere signaturen (vi stoler på at Trumf sin server utstedte den). */
-function decodeJwtExpiry(jwt: string): Date | null {
+/** Leser payloadet fra en JWT uten å verifisere signaturen (vi stoler på at Trumf sin server utstedte den). */
+function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
   try {
     const payloadB64Url = jwt.split(".")[1];
     const payloadB64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8")) as { exp?: number };
-    return typeof json.exp === "number" ? new Date(json.exp * 1000) : null;
+    return JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8")) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+function decodeJwtExpiry(jwt: string): Date | null {
+  const exp = decodeJwtPayload(jwt)?.exp;
+  return typeof exp === "number" ? new Date(exp * 1000) : null;
+}
+
+/**
+ * Henter medlems-id-claimet fra access-tokenet (kreves for å bestille GDPR-
+ * databehandler-eksporten med varelinjer, se client.ts sin requestExport).
+ */
+export function getMemberIdFromAccessToken(accessToken: string): string | null {
+  const claim = decodeJwtPayload(accessToken)?.["http://id.trumf.no/claims/medlem"];
+  return typeof claim === "string" ? claim : null;
 }
 
 export interface WebLoginTokens {

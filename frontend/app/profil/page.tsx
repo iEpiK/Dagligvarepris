@@ -11,6 +11,7 @@ const CHAIN_LABELS: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Aktiv",
+  waiting_for_export: "Henter kvitteringer fra Trumf …",
   error: "Feil",
   disconnected: "Frakoblet",
 };
@@ -110,6 +111,11 @@ export default function ProfilPage() {
                     {c.lastSyncedAt && ` · sist synket ${new Date(c.lastSyncedAt).toLocaleString("nb-NO")}`}
                   </div>
                   {c.status === "error" && c.lastError && <p className="error-text">{c.lastError}</p>}
+                  {c.status === "waiting_for_export" && (
+                    <p className="helper-text">
+                      Trumf forbereder en eksport av kjøpshistorikken din - dette tar normalt under en time. Kvitteringene dukker opp av seg selv, ingen handling nødvendig.
+                    </p>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>

@@ -1,22 +1,26 @@
-/** Rå responsformer fra det uoffisielle Trumf-endepunktet, se README for kilder. */
+/**
+ * Rå responsform fra Trumf sin GDPR-databehandler-eksport ("Innsyn og
+ * utlevering" på www.trumf.no/profil/innsyn-og-utlevering). Bekreftet fra
+ * ekte data 2026-08-15 - se client.ts for hvordan dette hentes (to-stegs,
+ * asynkron prosess).
+ */
 
-export interface TrumfTransaksjon {
-  dato: string; // ISO-dato
-  beskrivelse: string; // butikknavn
-  kjedeid?: string;
-  partnerid?: string;
-  batchid: string; // brukes som eksternId + til å hente detaljer
-  belop: number;
-  trumftotal?: number;
+export interface TrumfEksportVarelinje {
+  varenavn: string;
+  /** Streng med tre desimaler - antall stk, ELLER vekt i kg for løsvarer (f.eks "0.918"). */
+  vareAntallVekt: string;
+  /** Streng med to desimaler, kr. Linjens totalbeløp (kan være negativt for rabatter/panttrekk). */
+  vareBelop: string;
 }
 
-export interface TrumfVarelinje {
-  vareTekst: string;
-  ean?: string;
-  antall: number;
-  belop: number;
-}
-
-export interface TrumfTransaksjonDetaljer {
-  varelinjer: TrumfVarelinje[];
+export interface TrumfEksportKvittering {
+  /** "DD.MM.YYYY" - IKKE ISO-format. */
+  dato: string;
+  kvitteringsnummer: string;
+  kjede: string | null;
+  butikknavn: string;
+  totaltBelop: string;
+  korttype: string | null;
+  kanal: string | null;
+  varelinjer: TrumfEksportVarelinje[];
 }

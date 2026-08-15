@@ -24,10 +24,14 @@ model ChainConnection {
   userId                 String
   user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   chain                  String
-  status                 String    @default("active") // active | error | disconnected
+  status                 String    @default("active") // active | waiting_for_export | error | disconnected
   encryptedAccessToken   String?
   encryptedRefreshToken  String?
   accessTokenExpiresAt   DateTime?
+  /// Tidspunkt vi sist ba Trumf om en ny GDPR-databehandler-eksport (se
+  /// connectors/trumf/client.ts) - satt mens vi venter på at den blir klar
+  /// (opptil ~1 time), nullstilt igjen når kvitteringene er hentet og lagret.
+  exportRequestedAt      DateTime?
   lastSyncedAt           DateTime?
   lastError              String?
   createdAt              DateTime  @default(now())

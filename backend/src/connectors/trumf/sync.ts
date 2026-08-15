@@ -5,12 +5,26 @@ import { NormalizedReceipt } from "../types";
 
 const connector = new TrumfConnector();
 
+/** Trumf sier i UI-et at eksporten er klar "innen 1 time" - bare diagnostikk, styrer ikke logikken. */
+const EXPORT_WAIT_MS = 60 * 60 * 1000;
+
 /**
- * Synker kvitteringer for én ChainConnection: bytter det lagrede refresh-
- * tokenet mot et ferskt access-token (ingen SMS kreves - det er hele poenget
- * med offline_access-scopet), henter fra Trumf, normaliserer, og lagrer
- * receipts/items/products/prices. Idempotent - kjøres trygt på gjentakelse
- * siden Receipt er unik per (connectionId, externalId).
+ * Synker kvitteringer for én ChainConnection. Trumf sin eneste kilde til
+ * per-vare-data (varelinjer) er en GDPR-databehandler-eksport som er
+ * ASYNKRON (se client.ts) - denne funksjonen er derfor to-faset og
+ * idempotent:
+ *
+ *  - Fase 1 (exportRequestedAt er tom): bestill en fersk eksport hos Trumf
+ *    og lagre tidspunktet. Returnerer med det samme - INGEN kvitteringer
+ *    hentes i denne runden.
+ *  - Fase 2 (exportRequestedAt er satt): prøv å hente den ferdige
+ *    eksporten. Ikke klar ennå -> ikke en feil, prøv igjen neste runde.
+ *    Klar -> lagre receipts/items/products/prices og nullstill
+ *    exportRequestedAt (neste synk-runde bestiller da en ny eksport).
+ *
+ * Siden SYNC_CRON som standard kjører hver 6. time, absorberes ventetiden
+ * på ~1 time naturlig av neste planlagte runde uten egen poll-mekanisme.
+ * Idempotent på lagring - Receipt er unik per (connectionId, externalId).
  */
 export async function syncTrumfConnection(connectionId: string): Promise<void> {
   const connection = await prisma.chainConnection.findUniqueOrThrow({ where: { id: connectionId } });
@@ -19,17 +33,52 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
     throw new Error("Tilkoblingen mangler refresh-token - må kobles til på nytt");
   }
 
-  // Første sync henter siste 12 måneder, senere sync henter fra forrige synk.
-  const fromDate = connection.lastSyncedAt ?? new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-  const toDate = new Date();
-
   try {
     const storedRefreshToken = decrypt(connection.encryptedRefreshToken);
     const fresh = await connector.refreshAccessToken(storedRefreshToken);
+    const freshRefreshToken = fresh.refreshToken ?? storedRefreshToken;
 
-    const receipts = await connector.fetchReceipts(fresh.accessToken, fromDate, toDate);
-    console.error(`[trumf] sync ${connectionId}: fant ${receipts.length} kvitteringer (${fromDate.toISOString()} - ${toDate.toISOString()})`);
+    if (!connection.exportRequestedAt) {
+      // Fase 1: bestill en ny eksport.
+      await connector.requestExport(fresh.accessToken);
+      console.error(`[trumf] sync ${connectionId}: bestilte ny eksport hos Trumf, klar om inntil 1 time`);
 
+      await prisma.chainConnection.update({
+        where: { id: connectionId },
+        data: {
+          encryptedAccessToken: encrypt(fresh.accessToken),
+          encryptedRefreshToken: encrypt(freshRefreshToken),
+          accessTokenExpiresAt: fresh.expiresAt,
+          exportRequestedAt: new Date(),
+          status: "waiting_for_export",
+          lastError: null,
+        },
+      });
+      return;
+    }
+
+    // Fase 2: se om eksporten vi ba om tidligere er klar.
+    const receipts = await connector.fetchExportIfReady(fresh.accessToken);
+
+    if (!receipts) {
+      const waitedMs = Date.now() - connection.exportRequestedAt.getTime();
+      console.error(
+        `[trumf] sync ${connectionId}: eksporten er ikke klar ennå (ventet ${Math.round(waitedMs / 60000)} min${
+          waitedMs > EXPORT_WAIT_MS ? ", uvanlig lenge" : ""
+        })`
+      );
+      await prisma.chainConnection.update({
+        where: { id: connectionId },
+        data: {
+          encryptedAccessToken: encrypt(fresh.accessToken),
+          encryptedRefreshToken: encrypt(freshRefreshToken),
+          accessTokenExpiresAt: fresh.expiresAt,
+        },
+      });
+      return;
+    }
+
+    console.error(`[trumf] sync ${connectionId}: hentet ${receipts.length} kvitteringer fra eksporten`);
     for (const receipt of receipts) {
       await saveReceipt(connectionId, receipt);
     }
@@ -38,9 +87,10 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
       where: { id: connectionId },
       data: {
         encryptedAccessToken: encrypt(fresh.accessToken),
-        encryptedRefreshToken: encrypt(fresh.refreshToken ?? storedRefreshToken),
+        encryptedRefreshToken: encrypt(freshRefreshToken),
         accessTokenExpiresAt: fresh.expiresAt,
-        lastSyncedAt: toDate,
+        lastSyncedAt: new Date(),
+        exportRequestedAt: null,
         status: "active",
         lastError: null,
       },
