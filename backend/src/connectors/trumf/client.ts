@@ -21,10 +21,11 @@ import { WebLoginTokens, refreshWebLogin, getMemberIdFromAccessToken } from "./w
  *      application/zip) som inneholder én JSON-fil med kvitteringene,
  *      INKLUDERT varelinjer (varenavn, antall/vekt, beløp).
  *
- * Begge kallene autentiseres med det samme Bearer-access-tokenet vi allerede
- * henter fra www.trumf.no/api/auth/session - bekreftet fra ekte
- * request-headere (IKKE cookie-basert, i motsetning til RSC-endepunktene
- * som ble vurdert og forkastet før dette).
+ * Begge kallene sender Bearer-access-tokenet fra www.trumf.no/api/auth/session,
+ * MEN steg 2 (getfiles, på www.trumf.no) krever i tillegg Auth.js sin egen
+ * sesjons-cookie - Bearer alene gir 401 der selv når filen er klar
+ * (bekreftet 2026-08-15, se fetchExportIfReady). Steg 1 (innsyn, på
+ * platform-rest-prod.ngdata.no) godtar derimot Bearer alene.
  *
  * Siden ventetiden (~1t) er lengre enn ett enkelt synk-kall bør vare, er
  * dette splittet i to faser drevet av SYNC_CRON (se sync.ts): første synk-
@@ -63,7 +64,7 @@ export class TrumfConnector {
       body: JSON.stringify({
         medlemId,
         format: "JSON",
-        periode: "SISTE_3_AR",
+        periode: "SISTE_12_MANEDER",
         onskerProfil: false,
         onskerDigitalHistorikk: false,
         onskerDialoghistorikk: false,
@@ -83,10 +84,22 @@ export class TrumfConnector {
    * Steg 2: prøv å hente den bestilte eksporten. Returnerer null hvis den
    * ikke er klar ennå - dette er IKKE en feil, bare prøv igjen neste
    * synk-runde (se sync.ts).
+   *
+   * VIKTIG (bekreftet 2026-08-15 via nettleser-konsoll-test med
+   * credentials:'omit'): I MOTSETNING TIL requestExport (som er på
+   * platform-rest-prod.ngdata.no og godtar Bearer alene) krever DETTE
+   * endepunktet - som ligger på www.trumf.no og går via deres Auth.js -
+   * ALLTID den tilhørende sesjons-cookien i tillegg til Bearer-tokenet.
+   * Bearer alene gir 401 Unauthorized selv når eksporten faktisk er klar
+   * (bekreftet: samme kall med cookie fra nettleseren gir 200 OK). Dette var
+   * root cause til at vår backend aldri klarte å hente en ferdig eksport -
+   * det var ikke et timing-/periode-problem. cookieHeader er den
+   * serialiserte www.trumf.no-cookie-strengen vi allerede lagrer som
+   * "refreshToken" (se webAuth.ts).
    */
-  async fetchExportIfReady(accessToken: string): Promise<NormalizedReceipt[] | null> {
+  async fetchExportIfReady(accessToken: string, cookieHeader: string): Promise<NormalizedReceipt[] | null> {
     const res = await fetch(GETFILES_URL, {
-      headers: { ...COMMON_HEADERS, Authorization: `Bearer ${accessToken}` },
+      headers: { ...COMMON_HEADERS, Authorization: `Bearer ${accessToken}`, Cookie: cookieHeader },
     });
 
     if (res.status === 404 || res.status === 204) {

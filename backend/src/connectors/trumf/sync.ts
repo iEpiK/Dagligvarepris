@@ -67,7 +67,7 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
     // refreshAccessToken-kallet over, så dette maskerer ikke noe reelt.
     let receipts: NormalizedReceipt[] | null = null;
     try {
-      receipts = await connector.fetchExportIfReady(fresh.accessToken);
+      receipts = await connector.fetchExportIfReady(fresh.accessToken, freshRefreshToken);
     } catch (checkErr) {
       console.error(
         `[trumf] sync ${connectionId}: eksport-sjekk feilet forbigående (prøver igjen senere):`,
