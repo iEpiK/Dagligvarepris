@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import ConnectNavLink from "./ConnectNavLink";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,9 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/profil" className="nav-link">
                 Min side
               </Link>
-              <Link href="/connect" className="nav-link">
-                Koble til konto
-              </Link>
+              <ConnectNavLink />
             </nav>
           </div>
         </header>

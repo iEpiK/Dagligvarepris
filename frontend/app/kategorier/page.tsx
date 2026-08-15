@@ -7,11 +7,16 @@ import { Category, listCategories } from "@/lib/api";
 export default function KategorierPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loggedIn, setLoggedIn] = useState(false);
 
   useEffect(() => {
     listCategories()
       .then(setCategories)
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    setLoggedIn(Boolean(localStorage.getItem("token")));
   }, []);
 
   return (
@@ -26,7 +31,13 @@ export default function KategorierPage() {
       {!loading && categories.length === 0 && (
         <p className="empty-state">
           Ingen kategoriserte produkter ennå. Datagrunnlaget bygges opp etter hvert som flere kobler
-          til kontoen sin – <Link href="/connect">bli med du også</Link>.
+          til kontoen sin
+          {loggedIn ? "." : (
+            <>
+              {" "}
+              – <Link href="/connect">bli med du også</Link>.
+            </>
+          )}
         </p>
       )}
 

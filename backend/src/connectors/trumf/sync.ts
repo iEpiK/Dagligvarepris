@@ -54,6 +54,7 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
           lastError: null,
         },
       });
+      scheduleQuickExportChecks(connectionId);
       return;
     }
 
@@ -101,6 +102,33 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
       data: { status: "error", lastError: err instanceof Error ? err.message : String(err) },
     });
     throw err;
+  }
+}
+
+/**
+ * Trumf sier eksporten er klar "innen 1 time", men ofte raskere i praksis.
+ * I stedet for å vente til neste faste SYNC_CRON-runde (opptil 6 timer, se
+ * scheduler.ts) etter at en eksport nettopp er bestilt, planlegger vi to
+ * raske sjekk-forsøk: etter 1 minutt og etter 10 minutter. Begge kaller
+ * syncTrumfConnection på nytt, som - siden exportRequestedAt nå er satt -
+ * UTELUKKENDE gjør fase 2 (GET-sjekk om eksporten er klar), ALDRI en ny
+ * bestilling. Deretter faller vi tilbake på den faste 6-timers-runden.
+ *
+ * Kun i minnet (samme mønster som pendingLogins.ts) - overlever ikke en
+ * restart av backend-prosessen i vinduet mellom bestilling og sjekk, men
+ * det er uproblematisk siden den faste 6-timers-runden uansett plukker opp
+ * tilkoblingen til slutt.
+ */
+function scheduleQuickExportChecks(connectionId: string): void {
+  for (const delayMs of [1 * 60 * 1000, 10 * 60 * 1000]) {
+    setTimeout(() => {
+      syncTrumfConnection(connectionId).catch((err) => {
+        console.error(
+          `[trumf] rask eksport-sjekk feilet for ${connectionId}:`,
+          err instanceof Error ? err.message : err
+        );
+      });
+    }, delayMs);
   }
 }
 
