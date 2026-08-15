@@ -189,16 +189,18 @@ export async function completeWebLoginWithOtp(pending: PendingWebLogin, otp: str
     body: JSON.stringify({ otp, rememberMeSms: true }),
   });
   pending.cookies.applyFrom(smsRes);
+  const smsBody = await smsRes.text().catch(() => "");
+  console.error(`[trumf] smsCode -> HTTP ${smsRes.status}, body: ${smsBody.slice(0, 300) || "(tom)"}`);
   if (!smsRes.ok) {
     throw new Error(`Trumf: feil SMS-kode (HTTP ${smsRes.status})`);
   }
 
-  const code = await tryGetAuthorizationCode(pending, returnUrlWithStepUp);
-  if (!code) {
-    throw new Error("Trumf: fikk ikke noen autorisasjonskode selv etter SMS-bekreftelse");
+  const result = await tryGetAuthorizationCode(pending, returnUrlWithStepUp);
+  if (!result.code) {
+    throw new Error(`Trumf: fikk ikke noen autorisasjonskode selv etter SMS-bekreftelse (${result.debug})`);
   }
 
-  return exchangeCodeForTokens(code, pending.codeVerifier);
+  return exchangeCodeForTokens(result.code, pending.codeVerifier);
 }
 
 /** Setter/overskriver acr_values i en returnUrl-streng, og gir tilbake en relativ sti+query. */
@@ -208,7 +210,13 @@ function withAcrValues(returnUrl: string, acrValues: string): string {
   return url.pathname + url.search;
 }
 
-async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: string): Promise<string | null> {
+interface CallbackAttempt {
+  code: string | null;
+  /** Menneskelesbar diagnose - fylt ut når code er null, så feilen faktisk kan feilsøkes uten server-tilgang. */
+  debug: string;
+}
+
+async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: string): Promise<CallbackAttempt> {
   const callbackUrl = new URL(returnUrl, AUTH_BASE);
   callbackUrl.searchParams.set("correlationId", pending.correlationId);
 
@@ -219,10 +227,20 @@ async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: stri
   pending.cookies.applyFrom(res);
 
   const location = res.headers.get("location");
-  if (!location) return null;
+  console.error(`[trumf] callback -> HTTP ${res.status}, Location: ${location ?? "(ingen)"}, cookies: ${pending.cookies.header()}`);
+
+  if (!location) {
+    const bodySnippet = (await res.text().catch(() => "")).slice(0, 500);
+    return { code: null, debug: `HTTP ${res.status} ${res.statusText}, ingen Location-header. Body: ${bodySnippet || "(tom)"}` };
+  }
 
   const redirectUrl = new URL(location, REDIRECT_URI);
-  return redirectUrl.searchParams.get("code");
+  const code = redirectUrl.searchParams.get("code");
+  if (!code) {
+    return { code: null, debug: `Fikk redirect til "${location}", men ingen code-parameter der` };
+  }
+
+  return { code, debug: "" };
 }
 
 async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<WebLoginTokens> {
