@@ -1,5 +1,6 @@
 import { prisma } from "../../db";
 import { decrypt, encrypt } from "../../utils/crypto";
+import { categorizeProduct } from "../../utils/categorize";
 import { TrumfConnector } from "./client";
 import { NormalizedReceipt } from "../types";
 
@@ -227,7 +228,7 @@ async function resolveProduct(rawName: string, ean?: string): Promise<string | u
     const product = await prisma.product.upsert({
       where: { ean },
       update: {},
-      create: { ean, name: rawName, normalizedName },
+      create: { ean, name: rawName, normalizedName, category: categorizeProduct(normalizedName) },
     });
     return product.id;
   }
@@ -235,7 +236,9 @@ async function resolveProduct(rawName: string, ean?: string): Promise<string | u
   const existing = await prisma.product.findFirst({ where: { normalizedName, ean: null } });
   if (existing) return existing.id;
 
-  const created = await prisma.product.create({ data: { name: rawName, normalizedName } });
+  const created = await prisma.product.create({
+    data: { name: rawName, normalizedName, category: categorizeProduct(normalizedName) },
+  });
   return created.id;
 }
 
