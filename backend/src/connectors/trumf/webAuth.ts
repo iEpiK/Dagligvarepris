@@ -161,23 +161,26 @@ export async function startWebLogin(phoneNumber: string, password: string): Prom
 
   const pending: PendingWebLogin = { cookies, correlationId, returnUrl, codeVerifier: verifier };
 
-  // Prøv å hente koden med en gang - dekker det (usannsynlige, for en fersk
-  // backend-sesjon) tilfellet der Trumf ikke krever SMS-bekreftelse.
-  const code = await tryGetAuthorizationCode(pending, false);
-  if (code) {
-    const tokens = await exchangeCodeForTokens(code, verifier);
-    return { done: true, tokens };
-  }
-
+  // En fersk backend-sesjon har aldri et "husket enhet"-cookie fra før, så
+  // Trumf krever alltid SMS-bekreftelse her - ingen vits i å spekulativt
+  // prøve callback-et før SMS er sendt inn (og et for tidlig kall risikerer å
+  // rote til server-sesjonstilstanden før vi i det hele tatt trenger den).
   return { done: false, pending };
 }
 
 /** Steg 4-6: fullfør innloggingen med SMS-koden brukeren har mottatt. */
 export async function completeWebLoginWithOtp(pending: PendingWebLogin, otp: string): Promise<WebLoginTokens> {
+  // Viktig: Trumf sin egen nettside oppdaterer returnUrl til å inneholde
+  // acr_values=cas:completed FØR SMS-koden sendes inn (bekreftet fra ekte
+  // trafikk) - det er tydeligvis denne verdien som forteller serveren at
+  // steg-up-en er fullført når vi senere henter autorisasjonskoden. Bruker vi
+  // fortsatt den opprinnelige (tomme) returnUrl-en her, godtar serveren SMS-
+  // koden greit, men callback-kallet gir aldri noen kode etterpå.
+  const returnUrlWithStepUp = withAcrValues(pending.returnUrl, "cas:completed");
+
   const stepParams = new URLSearchParams({
     correlationId: pending.correlationId,
-    returnUrl: pending.returnUrl,
-    acr_values: "cas:completed",
+    returnUrl: returnUrlWithStepUp,
   });
 
   const smsRes = await fetch(`${AUTH_BASE}/trumfid/smsCode?${stepParams.toString()}`, {
@@ -190,7 +193,7 @@ export async function completeWebLoginWithOtp(pending: PendingWebLogin, otp: str
     throw new Error(`Trumf: feil SMS-kode (HTTP ${smsRes.status})`);
   }
 
-  const code = await tryGetAuthorizationCode(pending, true);
+  const code = await tryGetAuthorizationCode(pending, returnUrlWithStepUp);
   if (!code) {
     throw new Error("Trumf: fikk ikke noen autorisasjonskode selv etter SMS-bekreftelse");
   }
@@ -198,12 +201,16 @@ export async function completeWebLoginWithOtp(pending: PendingWebLogin, otp: str
   return exchangeCodeForTokens(code, pending.codeVerifier);
 }
 
-async function tryGetAuthorizationCode(pending: PendingWebLogin, stepUpCompleted: boolean): Promise<string | null> {
-  const callbackUrl = new URL(pending.returnUrl, AUTH_BASE);
+/** Setter/overskriver acr_values i en returnUrl-streng, og gir tilbake en relativ sti+query. */
+function withAcrValues(returnUrl: string, acrValues: string): string {
+  const url = new URL(returnUrl, AUTH_BASE);
+  url.searchParams.set("acr_values", acrValues);
+  return url.pathname + url.search;
+}
+
+async function tryGetAuthorizationCode(pending: PendingWebLogin, returnUrl: string): Promise<string | null> {
+  const callbackUrl = new URL(returnUrl, AUTH_BASE);
   callbackUrl.searchParams.set("correlationId", pending.correlationId);
-  if (stepUpCompleted) {
-    callbackUrl.searchParams.set("acr_values", "cas:completed");
-  }
 
   const res = await fetch(callbackUrl.toString(), {
     headers: { ...COMMON_HEADERS, Cookie: pending.cookies.header() },
