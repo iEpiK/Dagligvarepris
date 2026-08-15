@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { login, signup, startTrumfLogin, submitTrumfOtp } from "@/lib/api";
+import { setToken } from "@/lib/auth";
 
 type Step = "loading" | "auth" | "connect" | "otp" | "done";
 
@@ -28,7 +29,7 @@ export default function ConnectPage() {
     setBusy(true);
     try {
       const token = mode === "signup" ? await signup(email, password) : await login(email, password);
-      localStorage.setItem("token", token);
+      setToken(token);
       setStep("connect");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Noe gikk galt");

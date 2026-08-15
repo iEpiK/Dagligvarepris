@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Connection, disconnectConnection, listConnections, syncConnection } from "@/lib/api";
+import { clearToken } from "@/lib/auth";
 
 const CHAIN_LABELS: Record<string, string> = {
   trumf: "Trumf (Kiwi, Meny, Spar, Joker)",
@@ -71,7 +72,7 @@ export default function ProfilPage() {
   }
 
   function handleLogout() {
-    localStorage.removeItem("token");
+    clearToken();
     router.replace("/");
   }
 
@@ -121,15 +122,11 @@ export default function ProfilPage() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => handleSync(c.id)}
-                  disabled={busyId === c.id || c.status === "waiting_for_export"}
-                >
+                <button type="button" onClick={() => handleSync(c.id)} disabled={busyId === c.id}>
                   {busyId === c.id
                     ? "Jobber …"
                     : c.status === "waiting_for_export"
-                      ? "Synkroniserer …"
+                      ? "Sjekk på nytt"
                       : "Synk nå"}
                 </button>
                 <button type="button" className="secondary" onClick={() => handleDisconnect(c.id)} disabled={busyId === c.id}>

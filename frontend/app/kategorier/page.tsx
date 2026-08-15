@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Category, listCategories } from "@/lib/api";
+import { getToken, onAuthChange } from "@/lib/auth";
 
 export default function KategorierPage() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -15,9 +16,7 @@ export default function KategorierPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    setLoggedIn(Boolean(localStorage.getItem("token")));
-  }, []);
+  useEffect(() => onAuthChange(() => setLoggedIn(Boolean(getToken()))), []);
 
   return (
     <main className="container">
