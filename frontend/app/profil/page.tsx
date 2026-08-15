@@ -114,6 +114,8 @@ export default function ProfilPage() {
                   {c.status === "waiting_for_export" && (
                     <p className="helper-text">
                       Trumf forbereder en eksport av kjøpshistorikken din - dette tar normalt under en time. Kvitteringene dukker opp av seg selv, ingen handling nødvendig.
+                      {c.lastCheckedAt &&
+                        ` Sist sjekket ${new Date(c.lastCheckedAt).toLocaleString("nb-NO")}, ikke klar ennå.`}
                     </p>
                   )}
                 </div>

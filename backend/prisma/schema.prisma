@@ -32,6 +32,9 @@ model ChainConnection {
   /// connectors/trumf/client.ts) - satt mens vi venter på at den blir klar
   /// (opptil ~1 time), nullstilt igjen når kvitteringene er hentet og lagret.
   exportRequestedAt      DateTime?
+  /// Tidspunkt vi sist spurte Trumf om eksporten var klar (uansett svar) -
+  /// vist til brukeren som et livstegn mens status er waiting_for_export.
+  lastCheckedAt          DateTime?
   lastSyncedAt           DateTime?
   lastError              String?
   createdAt              DateTime  @default(now())

@@ -107,6 +107,7 @@ export interface Connection {
   chain: string;
   status: string;
   lastSyncedAt: string | null;
+  lastCheckedAt: string | null;
   lastError: string | null;
   createdAt: string;
 }

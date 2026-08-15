@@ -13,7 +13,15 @@ connectionsRouter.use(requireAuth);
 connectionsRouter.get("/", async (req: AuthedRequest, res) => {
   const connections = await prisma.chainConnection.findMany({
     where: { userId: req.userId },
-    select: { id: true, chain: true, status: true, lastSyncedAt: true, lastError: true, createdAt: true },
+    select: {
+      id: true,
+      chain: true,
+      status: true,
+      lastSyncedAt: true,
+      lastCheckedAt: true,
+      lastError: true,
+      createdAt: true,
+    },
   });
   res.json({ connections });
 });

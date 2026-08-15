@@ -88,6 +88,7 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
           encryptedAccessToken: encrypt(fresh.accessToken),
           encryptedRefreshToken: encrypt(freshRefreshToken),
           accessTokenExpiresAt: fresh.expiresAt,
+          lastCheckedAt: new Date(),
         },
       });
       return;
@@ -105,6 +106,7 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
         encryptedRefreshToken: encrypt(freshRefreshToken),
         accessTokenExpiresAt: fresh.expiresAt,
         lastSyncedAt: new Date(),
+        lastCheckedAt: new Date(),
         exportRequestedAt: null,
         status: "active",
         lastError: null,
