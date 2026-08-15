@@ -1,9 +1,13 @@
-import {
-  ChainAuthResult,
-  ChainConnector,
-  NormalizedReceipt,
-} from "../types";
+import { NormalizedReceipt } from "../types";
 import { TrumfTransaksjon, TrumfTransaksjonDetaljer } from "./types";
+import { WebLoginTokens, refreshWebLogin } from "./webAuth";
+
+/**
+ * Henter faktiske kvitteringer fra det uoffisielle, men bekreftede,
+ * transaksjons-endepunktet. Innlogging skjer separat via webAuth.ts
+ * (se routes/connections.ts) - denne klassen tar kun imot et ferdig
+ * access-token og bruker det.
+ */
 
 const BASE_URL = "https://platform-rest-prod.ngdata.no/trumf/husstand";
 
@@ -28,42 +32,15 @@ const TRANSAKSJON_FELTER = [
   "trumftotal",
 ].join(",");
 
-export class TrumfConnector implements ChainConnector {
+export class TrumfConnector {
   chain = "trumf";
 
-  /**
-   * IKKE VERIFISERT MOT EKTE TRUMF-INNLOGGING.
-   *
-   * Transaksjons- og detalj-endepunktene under er bekreftet fra kildene i
-   * README (ttyridal/trumf-data-fetch), men selve login-kallet som bytter
-   * telefonnummer+passord mot en gyldig `Authorization`-verdi er IKKE
-   * dokumentert i de kildene jeg fant. Du må fange dette kallet selv med
-   * f.eks. mitmproxy (se README) og fylle inn riktig URL/body/token-parsing
-   * her før dette kan brukes i produksjon.
-   *
-   * Kaster med vilje en tydelig feil inntil dette er gjort, i stedet for å
-   * late som det virker.
-   */
-  async login(_credentials: { phoneNumber: string; password: string }): Promise<ChainAuthResult> {
-    throw new Error(
-      "TrumfConnector.login() er ikke koblet til et verifisert endepunkt ennå. " +
-        "Se README.md #slik-finner-du-innloggings-endepunktet."
-    );
-
-    // Eksempel på hvordan resultatet skal se ut når du har fylt inn ekte kall:
-    // const response = await fetch("https://<verifisert-login-url>", {
-    //   method: "POST",
-    //   headers: COMMON_HEADERS,
-    //   body: JSON.stringify({ phoneNumber: credentials.phoneNumber, password: credentials.password }),
-    // });
-    // const data = await response.json();
-    // return {
-    //   accessToken: data.token,
-    //   expiresAt: new Date(Date.now() + 1000 * 60 * 60), // juster etter faktisk levetid
-    // };
+  /** Bytter et lagret refresh-token mot et ferskt access-token. Ingen SMS kreves. */
+  async refreshAccessToken(refreshToken: string): Promise<WebLoginTokens> {
+    return refreshWebLogin(refreshToken);
   }
 
-  async fetchReceipts(auth: ChainAuthResult, fromDate: Date, toDate: Date): Promise<NormalizedReceipt[]> {
+  async fetchReceipts(accessToken: string, fromDate: Date, toDate: Date): Promise<NormalizedReceipt[]> {
     const params = new URLSearchParams({
       felter: TRANSAKSJON_FELTER,
       fra: formatDate(fromDate),
@@ -71,8 +48,14 @@ export class TrumfConnector implements ChainConnector {
       format: "crm",
     });
 
+    // IKKE VERIFISERT: at "Bearer "-prefikset er riktig format på access-tokenet
+    // fra web-innloggingen (client_id=trumf) mot dette endepunktet, og at scopet
+    // vi fikk faktisk dekker transaksjonshistorikk og ikke bare saldo/medlemsdata.
+    // Test dette først med ett ekte kall før du stoler på output.
+    const authHeader = `Bearer ${accessToken}`;
+
     const listResponse = await fetch(`${BASE_URL}/transaksjoner?${params.toString()}`, {
-      headers: { ...COMMON_HEADERS, Authorization: auth.accessToken },
+      headers: { ...COMMON_HEADERS, Authorization: authHeader },
     });
 
     if (!listResponse.ok) {
@@ -89,7 +72,7 @@ export class TrumfConnector implements ChainConnector {
 
       const detailsResponse = await fetch(
         `${BASE_URL}/transaksjoner/detaljer/${encodeURIComponent(t.batchid)}`,
-        { headers: { ...COMMON_HEADERS, Authorization: auth.accessToken } }
+        { headers: { ...COMMON_HEADERS, Authorization: authHeader } }
       );
 
       if (!detailsResponse.ok) {

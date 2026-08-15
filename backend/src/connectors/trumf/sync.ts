@@ -1,30 +1,33 @@
 import { prisma } from "../../db";
-import { decrypt } from "../../utils/crypto";
+import { decrypt, encrypt } from "../../utils/crypto";
 import { TrumfConnector } from "./client";
 import { NormalizedReceipt } from "../types";
 
 const connector = new TrumfConnector();
 
 /**
- * Synker kvitteringer for én ChainConnection: henter fra Trumf, normaliserer,
- * og lagrer receipts/items/products/prices. Idempotent - kjøres trygt på
- * gjentakelse siden Receipt er unik per (connectionId, externalId).
+ * Synker kvitteringer for én ChainConnection: bytter det lagrede refresh-
+ * tokenet mot et ferskt access-token (ingen SMS kreves - det er hele poenget
+ * med offline_access-scopet), henter fra Trumf, normaliserer, og lagrer
+ * receipts/items/products/prices. Idempotent - kjøres trygt på gjentakelse
+ * siden Receipt er unik per (connectionId, externalId).
  */
 export async function syncTrumfConnection(connectionId: string): Promise<void> {
   const connection = await prisma.chainConnection.findUniqueOrThrow({ where: { id: connectionId } });
 
-  if (!connection.encryptedAccessToken) {
-    throw new Error("Tilkoblingen mangler access token");
+  if (!connection.encryptedRefreshToken) {
+    throw new Error("Tilkoblingen mangler refresh-token - må kobles til på nytt");
   }
-
-  const accessToken = decrypt(connection.encryptedAccessToken);
 
   // Første sync henter siste 12 måneder, senere sync henter fra forrige synk.
   const fromDate = connection.lastSyncedAt ?? new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   const toDate = new Date();
 
   try {
-    const receipts = await connector.fetchReceipts({ accessToken }, fromDate, toDate);
+    const storedRefreshToken = decrypt(connection.encryptedRefreshToken);
+    const fresh = await connector.refreshAccessToken(storedRefreshToken);
+
+    const receipts = await connector.fetchReceipts(fresh.accessToken, fromDate, toDate);
 
     for (const receipt of receipts) {
       await saveReceipt(connectionId, receipt);
@@ -32,7 +35,14 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
 
     await prisma.chainConnection.update({
       where: { id: connectionId },
-      data: { lastSyncedAt: toDate, status: "active", lastError: null },
+      data: {
+        encryptedAccessToken: encrypt(fresh.accessToken),
+        encryptedRefreshToken: encrypt(fresh.refreshToken ?? storedRefreshToken),
+        accessTokenExpiresAt: fresh.expiresAt,
+        lastSyncedAt: toDate,
+        status: "active",
+        lastError: null,
+      },
     });
   } catch (err) {
     await prisma.chainConnection.update({

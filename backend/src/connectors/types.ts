@@ -1,7 +1,9 @@
 /**
- * Felles kontrakt for en kjede-connector, slik at Trumf, Rema og Coop kan
- * plugges inn på samme måte (fase 2 legger bare til nye mapper under
- * connectors/rema, connectors/coop som implementerer det samme).
+ * Felles kontrakt for en enkel kjede-connector (kun brukernavn/passord, ett
+ * steg). Trumf sin ekte flyt krever et ekstra SMS-steg (se
+ * connectors/trumf/webAuth.ts) og har derfor sin egen, rikere form i stedet
+ * for å implementere dette interfacet direkte. Bruk dette som mal for Rema/
+ * Coop i fase 2 dersom de IKKE krever tilsvarende flertrinns-flyt.
  */
 
 export interface ChainAuthResult {

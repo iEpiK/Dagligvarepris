@@ -36,14 +36,33 @@ export async function getPriceHistory(id: string, days = 365): Promise<PricePoin
   return data.series;
 }
 
-export async function connectTrumf(token: string, phoneNumber: string, password: string) {
-  const res = await fetch(`${API_URL}/connections/trumf`, {
+export type StartTrumfLoginResult =
+  | { status: "connected" }
+  | { status: "otp_required"; pendingLoginId: string };
+
+export async function startTrumfLogin(
+  token: string,
+  phoneNumber: string,
+  password: string
+): Promise<StartTrumfLoginResult> {
+  const res = await fetch(`${API_URL}/connections/trumf/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ phoneNumber, password }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Kunne ikke koble til Trumf");
+  if (!res.ok) throw new Error(data.error || "Kunne ikke logge inn hos Trumf");
+  return data;
+}
+
+export async function submitTrumfOtp(token: string, pendingLoginId: string, otp: string) {
+  const res = await fetch(`${API_URL}/connections/trumf/otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ pendingLoginId, otp }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Feil SMS-kode");
   return data;
 }
 

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { connectTrumf, login, signup } from "@/lib/api";
+import { login, signup, startTrumfLogin, submitTrumfOtp } from "@/lib/api";
 
-type Step = "loading" | "auth" | "connect" | "done";
+type Step = "loading" | "auth" | "connect" | "otp" | "done";
 
 export default function ConnectPage() {
   const [step, setStep] = useState<Step>("loading");
@@ -12,6 +12,8 @@ export default function ConnectPage() {
   const [password, setPassword] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [trumfPassword, setTrumfPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [pendingLoginId, setPendingLoginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -41,10 +43,31 @@ export default function ConnectPage() {
     setBusy(true);
     try {
       const token = localStorage.getItem("token")!;
-      await connectTrumf(token, phoneNumber, trumfPassword);
+      const result = await startTrumfLogin(token, phoneNumber, trumfPassword);
+      if (result.status === "connected") {
+        setStep("done");
+      } else {
+        setPendingLoginId(result.pendingLoginId);
+        setStep("otp");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kunne ikke logge inn hos Trumf");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pendingLoginId) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const token = localStorage.getItem("token")!;
+      await submitTrumfOtp(token, pendingLoginId, otp);
       setStep("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Kunne ikke koble til Trumf");
+      setError(err instanceof Error ? err.message : "Feil SMS-kode");
     } finally {
       setBusy(false);
     }
@@ -130,11 +153,36 @@ export default function ConnectPage() {
           </div>
           <p className="helper-text">
             Passordet ditt sendes direkte til Trumf sitt innloggingskall og lagres aldri hos oss –
-            kun den påfølgende tilgangstokenen lagres, kryptert.
+            kun de påfølgende tilgangs- og fornyingstokenene lagres, kryptert.
           </p>
           {error && <p className="error-text">{error}</p>}
           <button type="submit" disabled={busy}>
-            Koble til
+            Logg inn hos Trumf
+          </button>
+        </form>
+      )}
+
+      {step === "otp" && (
+        <form onSubmit={handleOtp}>
+          <div>
+            <label htmlFor="otp">SMS-kode</label>
+            <input
+              id="otp"
+              type="text"
+              inputMode="numeric"
+              required
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              placeholder="6 siffer"
+            />
+          </div>
+          <p className="helper-text">
+            Trumf har sendt en engangskode på SMS til telefonnummeret du oppga. Skriv den inn under
+            for å fullføre tilkoblingen.
+          </p>
+          {error && <p className="error-text">{error}</p>}
+          <button type="submit" disabled={busy}>
+            Bekreft kode
           </button>
         </form>
       )}

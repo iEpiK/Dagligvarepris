@@ -7,8 +7,34 @@ omgang – dekker Kiwi, Meny, Spar og Joker via NorgesGruppen).
 ## Hvordan dette faktisk fungerer (viktig å forstå før du drifter dette)
 
 Trumf har ingen offentlig/offisiell API for kjøpshistorikk. Dette prosjektet
-bruker et **reverse-engineert, uoffisielt endepunkt** som Trumf sin egen app
-bruker internt:
+bruker to reverse-engineerte, uoffisielle deler av Trumf sin egen infrastruktur:
+
+**1. Innlogging** – standard OAuth2 Authorization Code + PKCE mot
+`id.trumf.no`, samme identitetstjeneste som `www.trumf.no` selv bruker
+(`client_id=trumf`). Kartlagt og verifisert steg for steg via nettleserens
+Network-fane (ikke gjettet):
+
+```
+GET  id.trumf.no/connect/authorize            -> redirect med correlationId + returnUrl
+POST id.trumf.no/trumfid/login/validateUser    {"phoneNumber": "..."}
+POST id.trumf.no/trumfid/login/pwd             {"password": "...", "rememberMe": true}
+POST id.trumf.no/trumfid/smsCode               {"otp": "...", "rememberMeSms": true}   (2FA)
+GET  <returnUrl> (=/connect/authorize/callback) -> redirect med ?code=...
+POST id.trumf.no/connect/token                  bytter koden mot access_token + refresh_token
+```
+
+Full implementasjon: `backend/src/connectors/trumf/webAuth.ts`. Siden scopet
+inkluderer `offline_access`, kjøres denne flyten kun **én gang** per bruker –
+deretter bruker bakgrunnsjobben kun `refresh_token` (samme fil, `refreshWebLogin()`)
+til å hente nye access-tokens uten noen ny SMS-bekreftelse.
+
+Merk: dette er **web-varianten** av innloggingen (samme som `www.trumf.no`
+selv bruker), ikke Android-appens. Det er bevisst – Android-appens flyt
+(`client_id=trumf.app`) krever en Google Play Integrity-attestering
+(enhets-/app-signaturbevis) som ikke lar seg etterligne fra en backend-tjeneste.
+Web-flyten krever ingen slik attestering.
+
+**2. Henting av kvitteringer** – samme endepunkt som Android-appen bruker:
 
 ```
 GET https://platform-rest-prod.ngdata.no/trumf/husstand/transaksjoner
@@ -22,23 +48,19 @@ Kilder som dokumenterer dette (funnet gjennom research, ikke noe jeg har funnet 
 - https://github.com/ttyridal/trumf-data-fetch (viser faktisk request/response-format)
 - https://gist.github.com/HelgeSverre/80a7f34f874336324184a0c513c2e6a2
 
-**Det jeg IKKE har bekreftet endepunktet for:** selve innloggingen (hvordan man
-bytter telefonnummer+passord mot en gyldig `Authorization`-token). Dette må
-verifiseres manuelt – se `backend/src/connectors/trumf/client.ts` for hvor du
-plugger det inn, og fremgangsmåten under.
+**Det jeg IKKE har bekreftet ennå (test dette først):**
 
-### Slik finner/verifiserer du innloggings-endepunktet
+- At `Authorization: Bearer <access_token>` er riktig headerformat mot
+  `platform-rest-prod.ngdata.no/trumf/husstand/transaksjoner` når tokenet
+  kommer fra web-innloggingen (kun brukt mot `saldo`/medlemsdata i det jeg
+  observerte i nettleseren – ikke mot transaksjonshistorikk direkte).
+- At scopet vi får (`api.rest api.sylinder api.trumfid ... offline_access
+  openid profile`) faktisk gir tilgang til kvitteringshistorikk og ikke bare
+  saldo/medlemsdata.
 
-1. Installer mitmproxy på en maskin, konfigurer telefonen din til å bruke den
-   som proxy, installer mitmproxy sitt CA-sertifikat på telefonen.
-2. Logg ut og inn igjen i Trumf-appen, se hvilket kall som skjer når du taster
-   inn telefonnummer/passord, og hvilket JSON-svar som kommer tilbake
-   (sannsynligvis et JWT eller en sesjonstoken).
-3. Fyll inn URL, request-body og hvordan tokenet parses i
-   `backend/src/connectors/trumf/client.ts` → funksjonen `login()`.
-
-Dette er bevisst ikke gjettet/hardkodet, fordi feil gjetning ville sett ut som
-at det virker mens det i realiteten hadde logget feil ting eller lekket noe.
+Kjør én ekte `POST /connections/trumf/start` + `/otp` og se om
+`syncTrumfConnection` faktisk henter kvitteringer (sjekk `lastError`-feltet på
+`ChainConnection` hvis noe feiler) – det er neste steg.
 
 ### Juridisk og etisk – vær bevisst på dette
 
@@ -91,7 +113,10 @@ docker compose exec backend npx prisma migrate deploy
 
 ## Status / hva som mangler før dette er en ferdig tjeneste
 
-- [ ] Verifisere/implementere ekte Trumf-innlogging (se over)
+- [x] Trumf-innlogging (web-flyten, OAuth2 + PKCE + SMS) – implementert i
+      `backend/src/connectors/trumf/webAuth.ts`, kartlagt fra ekte trafikk
+- [ ] Verifisere at kvitteringshentingen (`fetchReceipts`) faktisk fungerer
+      med et web-utstedt token (se avsnittet over) – gjør en ekte test-tilkobling
 - [ ] Rema 1000- og Coop-connectors (endepunkter er dokumentert i kildene over,
       samme mønster som Trumf-connectoren)
 - [ ] Bedre produktmatching på tvers av kjeder når EAN mangler (fuzzy matching)
@@ -99,3 +124,5 @@ docker compose exec backend npx prisma migrate deploy
 - [ ] Rate-limiting og overvåkning av om Trumf-endepunktet endrer seg
 - [ ] Personvernerklæring og "slett kontoen min"-flyt i UI (backend-endepunkt
       for disconnect finnes allerede, se `routes/connections.ts`)
+- [ ] Flytte `pendingLogins.ts` sin in-memory lagring til Redis e.l. dersom du
+      noen gang kjører flere enn én backend-instans

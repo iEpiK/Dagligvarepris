@@ -2,13 +2,12 @@ import { Router } from "express";
 import { prisma } from "../db";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { encrypt } from "../utils/crypto";
-import { TrumfConnector } from "../connectors/trumf/client";
+import { completeWebLoginWithOtp, startWebLogin, WebLoginTokens } from "../connectors/trumf/webAuth";
+import { savePendingLogin, takePendingLogin } from "../connectors/trumf/pendingLogins";
 import { syncTrumfConnection } from "../connectors/trumf/sync";
 
 export const connectionsRouter = Router();
 connectionsRouter.use(requireAuth);
-
-const trumf = new TrumfConnector();
 
 /** Liste over egne tilkoblinger og status (koblet til / feil / sist synket). */
 connectionsRouter.get("/", async (req: AuthedRequest, res) => {
@@ -20,48 +19,78 @@ connectionsRouter.get("/", async (req: AuthedRequest, res) => {
 });
 
 /**
- * Koble til Trumf: bruker sender inn telefonnummer+passord én gang, vi
- * bytter det mot en token og lagrer den kryptert. Selve login() kaster
- * foreløpig en feil inntil det uoffisielle endepunktet er verifisert -
- * se README.
+ * Steg 1 av "koble til Trumf": telefonnummer + passord. Fullfører flyten
+ * beskrevet i webAuth.ts. Normalt vil Trumf kreve en SMS-bekreftelse på en
+ * fersk sesjon (ingen "husket enhet") - da returnerer vi et pendingLoginId
+ * som brukes i /trumf/otp under. Skjer det (usannsynlig) ikke, kobler vi til
+ * med det samme.
  */
-connectionsRouter.post("/trumf", async (req: AuthedRequest, res) => {
+connectionsRouter.post("/trumf/start", async (req: AuthedRequest, res) => {
   const { phoneNumber, password } = req.body ?? {};
   if (typeof phoneNumber !== "string" || typeof password !== "string") {
     return res.status(400).json({ error: "Telefonnummer og passord er påkrevd" });
   }
 
   try {
-    const auth = await trumf.login({ phoneNumber, password });
+    const result = await startWebLogin(phoneNumber, password);
 
-    const connection = await prisma.chainConnection.upsert({
-      where: { userId_chain: { userId: req.userId!, chain: "trumf" } },
-      update: {
-        encryptedAccessToken: encrypt(auth.accessToken),
-        encryptedRefreshToken: auth.refreshToken ? encrypt(auth.refreshToken) : null,
-        accessTokenExpiresAt: auth.expiresAt,
-        status: "active",
-        lastError: null,
-      },
-      create: {
-        userId: req.userId!,
-        chain: "trumf",
-        encryptedAccessToken: encrypt(auth.accessToken),
-        encryptedRefreshToken: auth.refreshToken ? encrypt(auth.refreshToken) : null,
-        accessTokenExpiresAt: auth.expiresAt,
-      },
-    });
+    if (result.done) {
+      await saveConnection(req.userId!, result.tokens);
+      return res.status(201).json({ status: "connected" });
+    }
 
-    // Trigge første synk med en gang, uten å blokkere svaret unødig lenge.
-    syncTrumfConnection(connection.id).catch(() => {
-      /* status/feil er allerede lagret av syncTrumfConnection selv */
-    });
-
-    res.status(201).json({ connectionId: connection.id, status: "connecting" });
+    const pendingLoginId = savePendingLogin(req.userId!, result.pending);
+    res.status(202).json({ status: "otp_required", pendingLoginId });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "Kunne ikke koble til Trumf" });
+    res.status(502).json({ error: err instanceof Error ? err.message : "Kunne ikke logge inn hos Trumf" });
   }
 });
+
+/** Steg 2 av "koble til Trumf": SMS-engangskoden brukeren mottok. */
+connectionsRouter.post("/trumf/otp", async (req: AuthedRequest, res) => {
+  const { pendingLoginId, otp } = req.body ?? {};
+  if (typeof pendingLoginId !== "string" || typeof otp !== "string") {
+    return res.status(400).json({ error: "Mangler pendingLoginId eller SMS-kode" });
+  }
+
+  const pending = takePendingLogin(req.userId!, pendingLoginId);
+  if (!pending) {
+    return res.status(400).json({ error: "Innloggingsforsøket er utløpt eller ugyldig - start på nytt" });
+  }
+
+  try {
+    const tokens = await completeWebLoginWithOtp(pending, otp);
+    await saveConnection(req.userId!, tokens);
+    res.status(201).json({ status: "connected" });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "Feil SMS-kode" });
+  }
+});
+
+async function saveConnection(userId: string, tokens: WebLoginTokens): Promise<void> {
+  const connection = await prisma.chainConnection.upsert({
+    where: { userId_chain: { userId, chain: "trumf" } },
+    update: {
+      encryptedAccessToken: encrypt(tokens.accessToken),
+      encryptedRefreshToken: tokens.refreshToken ? encrypt(tokens.refreshToken) : null,
+      accessTokenExpiresAt: tokens.expiresAt,
+      status: "active",
+      lastError: null,
+    },
+    create: {
+      userId,
+      chain: "trumf",
+      encryptedAccessToken: encrypt(tokens.accessToken),
+      encryptedRefreshToken: tokens.refreshToken ? encrypt(tokens.refreshToken) : null,
+      accessTokenExpiresAt: tokens.expiresAt,
+    },
+  });
+
+  // Trigge første synk med en gang, uten å blokkere svaret unødig lenge.
+  syncTrumfConnection(connection.id).catch(() => {
+    /* status/feil er allerede lagret av syncTrumfConnection selv */
+  });
+}
 
 /** Trigge en manuell resynk (i tillegg til den periodiske bakgrunnsjobben). */
 connectionsRouter.post("/:id/sync", async (req: AuthedRequest, res) => {
