@@ -28,6 +28,7 @@ export async function syncTrumfConnection(connectionId: string): Promise<void> {
     const fresh = await connector.refreshAccessToken(storedRefreshToken);
 
     const receipts = await connector.fetchReceipts(fresh.accessToken, fromDate, toDate);
+    console.error(`[trumf] sync ${connectionId}: fant ${receipts.length} kvitteringer (${fromDate.toISOString()} - ${toDate.toISOString()})`);
 
     for (const receipt of receipts) {
       await saveReceipt(connectionId, receipt);
