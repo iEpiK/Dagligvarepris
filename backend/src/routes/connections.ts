@@ -87,8 +87,10 @@ async function saveConnection(userId: string, tokens: WebLoginTokens): Promise<v
   });
 
   // Trigge første synk med en gang, uten å blokkere svaret unødig lenge.
-  syncTrumfConnection(connection.id).catch(() => {
-    /* status/feil er allerede lagret av syncTrumfConnection selv */
+  syncTrumfConnection(connection.id).catch((err) => {
+    // status/feil er allerede lagret på ChainConnection av syncTrumfConnection selv -
+    // logg den også her så den er synlig i docker-loggene uten å måtte sjekke databasen/Min side.
+    console.error(`[trumf] første synk feilet for tilkobling ${connection.id}:`, err instanceof Error ? err.message : err);
   });
 }
 
